@@ -1,4 +1,4 @@
-name: SADEE SOLUTIONS - Extract ZIP & Deploy
+name: SADEE SOLUTIONS - Build & Deploy
 
 on:
   push:
@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   deploy:
+    name: Extract ZIP & Deploy Website
     runs-on: ubuntu-latest
 
     environment:
@@ -24,57 +25,100 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
+
+      # 1. Get repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find and extract website ZIP
+      # 2. Find ZIP and extract it
+      - name: Extract Website ZIP
         shell: bash
         run: |
           set -e
 
-          mkdir -p site
+          echo "Searching for ZIP file..."
 
-          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' | head -n 1)"
+          ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: No ZIP file found in repository root."
             exit 1
           fi
 
-          echo "Using ZIP: $ZIP_FILE"
+          echo "ZIP found: $ZIP_FILE"
+
+          rm -rf site
+          mkdir -p site
 
           unzip -o "$ZIP_FILE" -d site
 
-          shopt -s dotglob
-          dirs=(site/*)
+          echo "Extraction completed."
 
-          if [ "${#dirs[@]}" -eq 1 ] && [ -d "${dirs[0]}" ]; then
-            inner="${dirs[0]}"
+      # 3. Fix nested ZIP folder
+      - name: Detect Website Folder
+        shell: bash
+        run: |
+          set -e
 
-            find "$inner" \
-              -mindepth 1 \
-              -maxdepth 1 \
-              -exec mv {} site/ \;
+          if [ ! -f "site/index.html" ]; then
 
-            rmdir "$inner" || true
+            echo "index.html not found at site root."
+            echo "Checking nested folders..."
+
+            INDEX_PATH=$(find site -type f -name "index.html" | head -n 1)
+
+            if [ -z "$INDEX_PATH" ]; then
+              echo "ERROR: index.html not found anywhere."
+              find site -maxdepth 4 -type f | sort
+              exit 1
+            fi
+
+            INDEX_DIR=$(dirname "$INDEX_PATH")
+
+            echo "Website found in: $INDEX_DIR"
+
+            if [ "$INDEX_DIR" != "site" ]; then
+
+              find "$INDEX_DIR" \
+                -mindepth 1 \
+                -maxdepth 1 \
+                -exec mv {} site/ \;
+
+              rmdir "$INDEX_DIR" 2>/dev/null || true
+
+            fi
           fi
 
-          if [ ! -f site/index.html ]; then
-            echo "ERROR: index.html was not found after extraction."
-            find site -maxdepth 3 -type f | sort
+          echo "Final website files:"
+          find site -maxdepth 3 -type f | sort
+
+      # 4. Verify website
+      - name: Verify Website
+        shell: bash
+        run: |
+          set -e
+
+          if [ ! -f "site/index.html" ]; then
+            echo "ERROR: site/index.html does not exist."
             exit 1
           fi
 
-          echo "Website extracted successfully."
+          echo "Website verification successful."
+          echo "index.html found."
 
-      - name: Configure GitHub Pages
+      # 5. Configure GitHub Pages
+      - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
-      - name: Upload extracted website
+      # 6. Create Pages artifact
+      - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./site
 
+      # 7. Deploy
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
