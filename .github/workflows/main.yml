@@ -1,4 +1,4 @@
-name: SADEE SOLUTIONS - Deploy
+name: Netlify Deploy
 
 on:
   push:
@@ -6,75 +6,17 @@ on:
       - main
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: sadee-solutions-pages
-  cancel-in-progress: true
-
 jobs:
-  deploy:
+  check-site:
     runs-on: ubuntu-latest
-
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract ZIP
+      - name: Check website
         run: |
-          set -e
-
-          ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP file not found."
-            exit 1
-          fi
-
-          echo "ZIP: $ZIP_FILE"
-
-          rm -rf site
-          mkdir site
-
-          unzip -o "$ZIP_FILE" -d site
-
-      - name: Find index.html
-        run: |
-          set -e
-
-          if [ ! -f site/index.html ]; then
-
-            INDEX=$(find site -type f -name "index.html" | head -n 1)
-
-            if [ -z "$INDEX" ]; then
-              echo "ERROR: index.html not found."
-              exit 1
-            fi
-
-            DIR=$(dirname "$INDEX")
-
-            echo "Moving website from $DIR"
-
-            find "$DIR" -mindepth 1 -maxdepth 1 -exec mv {} site/ \;
-
-          fi
-
-          test -f site/index.html
-
-          echo "Website ready."
-
-      - name: Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./site
-
-      - name: Deploy Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          echo "Checking website files..."
+          test -f index.html
+          echo "index.html found successfully."
+          echo "Netlify will handle the deployment."
