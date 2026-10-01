@@ -1,0 +1,80 @@
+name: SADEE SOLUTIONS - Extract ZIP & Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: sadee-solutions-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract website ZIP
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p site
+
+          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' | head -n 1)"
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found in repository root."
+            exit 1
+          fi
+
+          echo "Using ZIP: $ZIP_FILE"
+
+          unzip -o "$ZIP_FILE" -d site
+
+          shopt -s dotglob
+          dirs=(site/*)
+
+          if [ "${#dirs[@]}" -eq 1 ] && [ -d "${dirs[0]}" ]; then
+            inner="${dirs[0]}"
+
+            find "$inner" \
+              -mindepth 1 \
+              -maxdepth 1 \
+              -exec mv {} site/ \;
+
+            rmdir "$inner" || true
+          fi
+
+          if [ ! -f site/index.html ]; then
+            echo "ERROR: index.html was not found after extraction."
+            find site -maxdepth 3 -type f | sort
+            exit 1
+          fi
+
+          echo "Website extracted successfully."
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload extracted website
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
