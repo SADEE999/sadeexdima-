@@ -1,4 +1,4 @@
-name: Netlify Deploy
+name: SADEE SOLUTIONS - Extract & Build
 
 on:
   push:
@@ -6,17 +6,205 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: sadee-solutions-build
+  cancel-in-progress: true
+
 jobs:
-  check-site:
+  build:
+    name: Extract Website & Build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      # 1. Get repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check website
+      # 2. Prepare build folder
+      - name: Prepare dist folder
+        shell: bash
         run: |
-          echo "Checking website files..."
-          test -f index.html
-          echo "index.html found successfully."
-          echo "Netlify will handle the deployment."
+          set -e
+
+          rm -rf dist
+          mkdir -p dist
+
+          echo "Repository files:"
+          find . -maxdepth 2 -type f \
+            ! -path './.git/*' \
+            | sort
+
+      # 3. Extract ZIP if a ZIP exists
+      - name: Extract website ZIP
+        shell: bash
+        run: |
+          set -e
+
+          ZIP_FILE=$(find . -maxdepth 1 -type f \
+            \( -iname "*.zip" \) \
+            | head -n 1 || true)
+
+          if [ -n "$ZIP_FILE" ]; then
+            echo "ZIP found: $ZIP_FILE"
+            unzip -o "$ZIP_FILE" -d dist
+          else
+            echo "No ZIP found."
+            echo "Using repository website files."
+            
+            for file in index.html styles.css app.js config.js; do
+              if [ -f "$file" ]; then
+                cp "$file" dist/
+              fi
+            done
+
+            if [ -d "assets" ]; then
+              cp -r assets dist/
+            fi
+
+            if [ -d "admin" ]; then
+              cp -r admin dist/
+            fi
+          fi
+
+      # 4. Flatten ZIP folder structure
+      - name: Fix extracted folder structure
+        shell: bash
+        run: |
+          set -e
+
+          INDEX_FILE=$(find dist -type f -name "index.html" | head -n 1 || true)
+
+          if [ -z "$INDEX_FILE" ]; then
+            echo "ERROR: index.html was not found."
+            find dist -maxdepth 5 -type f | sort
+            exit 1
+          fi
+
+          SITE_DIR=$(dirname "$INDEX_FILE")
+
+          echo "Website detected at: $SITE_DIR"
+
+          if [ "$SITE_DIR" != "dist" ]; then
+            echo "Moving website files to dist root..."
+
+            find "$SITE_DIR" -mindepth 1 -maxdepth 1 \
+              -exec mv {} dist/ \;
+
+            # Remove empty nested folders
+            find dist -mindepth 1 -type d -empty -delete || true
+          fi
+
+      # 5. Disable mobile pinch/touch zoom
+      - name: Disable mobile zoom
+        shell: bash
+        run: |
+          set -e
+
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          files = [
+              Path("dist/index.html"),
+              Path("dist/admin/index.html"),
+          ]
+
+          viewport = (
+              '<meta name="viewport" '
+              'content="width=device-width, initial-scale=1, '
+              'minimum-scale=1, maximum-scale=1, '
+              'user-scalable=no, viewport-fit=cover">'
+          )
+
+          for path in files:
+              if not path.exists():
+                  print(f"Skipping: {path}")
+                  continue
+
+              text = path.read_text(encoding="utf-8")
+
+              pattern = r'<meta\s+name=["\']viewport["\'][^>]*>'
+
+              if re.search(pattern, text, flags=re.I):
+                  text = re.sub(
+                      pattern,
+                      viewport,
+                      text,
+                      count=1,
+                      flags=re.I
+                  )
+              else:
+                  text = text.replace(
+                      "<head>",
+                      "<head>\n" + viewport,
+                      1
+                  )
+
+              path.write_text(text, encoding="utf-8")
+              print(f"Zoom disabled: {path}")
+          PY
+
+      # 6. Add touch behavior CSS
+      - name: Add mobile touch protection
+        shell: bash
+        run: |
+          set -e
+
+          for CSS in \
+            "dist/styles.css" \
+            "dist/admin/admin.css"
+          do
+            if [ -f "$CSS" ]; then
+              cat >> "$CSS" <<'EOF'
+
+          /* SADEE SOLUTIONS - Mobile touch protection */
+          html,
+          body {
+            touch-action: manipulation;
+          }
+
+          * {
+            -webkit-tap-highlight-color: transparent;
+          }
+          EOF
+
+              echo "Updated: $CSS"
+            fi
+          done
+
+      # 7. Verify website
+      - name: Verify build
+        shell: bash
+        run: |
+          set -e
+
+          echo "========== BUILD RESULT =========="
+
+          test -f dist/index.html
+
+          echo "Public website:"
+          ls -lh dist/index.html
+
+          if [ -f dist/admin/index.html ]; then
+            echo "Admin panel:"
+            ls -lh dist/admin/index.html
+          fi
+
+          echo ""
+          echo "Final files:"
+          find dist -maxdepth 3 -type f | sort
+
+          echo ""
+          echo "Build completed successfully."
+
+      # 8. Upload build artifact
+      - name: Upload website artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sadee-solutions-website
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
