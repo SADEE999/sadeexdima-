@@ -1,207 +1,70 @@
 name: SADEE SOLUTIONS - Extract & Build
-
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: sadee-solutions-build
   cancel-in-progress: true
-
 jobs:
   build:
     name: Extract Website & Build
     runs-on: ubuntu-latest
-
     steps:
-      # 1. Get repository
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 2. Prepare build folder
-      - name: Prepare dist folder
-        shell: bash
+      - name: Prepare dist
         run: |
           set -e
-
           rm -rf dist
           mkdir -p dist
-
-          echo "Repository files:"
-          find . -maxdepth 2 -type f \
-            ! -path './.git/*' \
-            | sort
-
-      # 3. Extract ZIP if a ZIP exists
-      - name: Extract website ZIP
+      - name: Extract ZIP or use repository files
         shell: bash
         run: |
           set -e
-
-          ZIP_FILE=$(find . -maxdepth 1 -type f \
-            \( -iname "*.zip" \) \
-            | head -n 1 || true)
-
+          ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' | head -n 1 || true)
           if [ -n "$ZIP_FILE" ]; then
-            echo "ZIP found: $ZIP_FILE"
+            echo "Extracting $ZIP_FILE"
             unzip -o "$ZIP_FILE" -d dist
           else
-            echo "No ZIP found."
-            echo "Using repository website files."
-            
-            for file in index.html styles.css app.js config.js; do
-              if [ -f "$file" ]; then
-                cp "$file" dist/
-              fi
-            done
-
-            if [ -d "assets" ]; then
-              cp -r assets dist/
-            fi
-
-            if [ -d "admin" ]; then
-              cp -r admin dist/
-            fi
+            echo "No root ZIP found; copying website files."
+            cp index.html styles.css app.js config.js dist/
+            cp -r assets dist/ 2>/dev/null || true
+            cp -r admin dist/ 2>/dev/null || true
           fi
-
-      # 4. Flatten ZIP folder structure
-      - name: Fix extracted folder structure
+      - name: Flatten website folder
         shell: bash
         run: |
           set -e
-
-          INDEX_FILE=$(find dist -type f -name "index.html" | head -n 1 || true)
-
-          if [ -z "$INDEX_FILE" ]; then
-            echo "ERROR: index.html was not found."
-            find dist -maxdepth 5 -type f | sort
-            exit 1
-          fi
-
-          SITE_DIR=$(dirname "$INDEX_FILE")
-
-          echo "Website detected at: $SITE_DIR"
-
-          if [ "$SITE_DIR" != "dist" ]; then
-            echo "Moving website files to dist root..."
-
-            find "$SITE_DIR" -mindepth 1 -maxdepth 1 \
-              -exec mv {} dist/ \;
-
-            # Remove empty nested folders
+          INDEX=$(find dist -type f -name index.html | head -n 1)
+          test -n "$INDEX"
+          D=$(dirname "$INDEX")
+          if [ "$D" != "dist" ]; then
+            find "$D" -mindepth 1 -maxdepth 1 -exec mv {} dist/ \;
             find dist -mindepth 1 -type d -empty -delete || true
           fi
-
-      # 5. Disable mobile pinch/touch zoom
-      - name: Disable mobile zoom
-        shell: bash
+      - name: Disable mobile pinch zoom
         run: |
-          set -e
-
-          python3 <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
           import re
-
-          files = [
-              Path("dist/index.html"),
-              Path("dist/admin/index.html"),
-          ]
-
-          viewport = (
-              '<meta name="viewport" '
-              'content="width=device-width, initial-scale=1, '
-              'minimum-scale=1, maximum-scale=1, '
-              'user-scalable=no, viewport-fit=cover">'
-          )
-
-          for path in files:
-              if not path.exists():
-                  print(f"Skipping: {path}")
-                  continue
-
-              text = path.read_text(encoding="utf-8")
-
-              pattern = r'<meta\s+name=["\']viewport["\'][^>]*>'
-
-              if re.search(pattern, text, flags=re.I):
-                  text = re.sub(
-                      pattern,
-                      viewport,
-                      text,
-                      count=1,
-                      flags=re.I
-                  )
-              else:
-                  text = text.replace(
-                      "<head>",
-                      "<head>\n" + viewport,
-                      1
-                  )
-
-              path.write_text(text, encoding="utf-8")
-              print(f"Zoom disabled: {path}")
+          tag='<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">'
+          for p in [Path('dist/index.html'),Path('dist/admin/index.html')]:
+            if not p.exists(): continue
+            s=p.read_text(encoding='utf-8')
+            s=re.sub(r'<meta\s+name=["\']viewport["\'][^>]*>',tag,s,count=1,flags=re.I)
+            p.write_text(s,encoding='utf-8')
           PY
-
-      # 6. Add touch behavior CSS
-      - name: Add mobile touch protection
-        shell: bash
+      - name: Verify
         run: |
           set -e
-
-          for CSS in \
-            "dist/styles.css" \
-            "dist/admin/admin.css"
-          do
-            if [ -f "$CSS" ]; then
-              cat >> "$CSS" <<'EOF'
-
-          /* SADEE SOLUTIONS - Mobile touch protection */
-          html,
-          body {
-            touch-action: manipulation;
-          }
-
-          * {
-            -webkit-tap-highlight-color: transparent;
-          }
-          EOF
-
-              echo "Updated: $CSS"
-            fi
-          done
-
-      # 7. Verify website
-      - name: Verify build
-        shell: bash
-        run: |
-          set -e
-
-          echo "========== BUILD RESULT =========="
-
           test -f dist/index.html
-
-          echo "Public website:"
-          ls -lh dist/index.html
-
-          if [ -f dist/admin/index.html ]; then
-            echo "Admin panel:"
-            ls -lh dist/admin/index.html
-          fi
-
-          echo ""
-          echo "Final files:"
+          test -f dist/admin/index.html
+          echo "Website build OK"
           find dist -maxdepth 3 -type f | sort
-
-          echo ""
-          echo "Build completed successfully."
-
-      # 8. Upload build artifact
-      - name: Upload website artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: sadee-solutions-website
